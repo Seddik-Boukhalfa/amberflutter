@@ -128,6 +128,9 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
 
         return true
       }
+
+      _result.success({})
+      return false
     }
     _result.success({})
     return false
