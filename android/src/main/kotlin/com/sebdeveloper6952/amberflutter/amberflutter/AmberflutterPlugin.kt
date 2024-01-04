@@ -129,8 +129,9 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
         return true
       }
 
-      _result.success({})
-      return false
+      val emp: HashMap<String, String?> = HashMap()
+      _result.success(emp)
+      return true
     }
     _result.success({})
     return false
