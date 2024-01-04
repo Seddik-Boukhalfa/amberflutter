@@ -56,12 +56,12 @@ class MethodChannelAmberflutter extends AmberflutterPlatform {
       "uri_data": eventJson,
       "id": id,
     };
-
+    print(arguments);
     final data = await methodChannel.invokeMethod<Map<dynamic, dynamic>>(
       'nostrsigner',
       arguments,
     );
-
+   print(data);
     return data ?? {};
   }
 
