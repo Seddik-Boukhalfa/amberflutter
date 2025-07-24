@@ -1,8 +1,10 @@
+import 'dart:convert';
+
+import 'package:amberflutter/models.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:amberflutter/models.dart';
+
 import 'amberflutter_platform_interface.dart';
-import 'dart:convert';
 
 /// An implementation of [AmberflutterPlatform] that uses method channels.
 class MethodChannelAmberflutter extends AmberflutterPlatform {
@@ -11,13 +13,12 @@ class MethodChannelAmberflutter extends AmberflutterPlatform {
   final methodChannel =
       const MethodChannel('com.sebdeveloper6952.amberflutter');
 
-
   @override
   Future<bool> isAppInstalled() async {
     final data = await methodChannel.invokeMethod<bool>(
       'isAppInstalled',
       {
-      'packageName': 'com.greenart7c3.nostrsigner',
+        'packageName': 'com.greenart7c3.nostrsigner',
       },
     );
 
@@ -25,8 +26,9 @@ class MethodChannelAmberflutter extends AmberflutterPlatform {
   }
 
   @override
-  Future<Map<dynamic, dynamic>> getPublicKey(
-      {List<Permission>? permissions}) async {
+  Future<Map<dynamic, dynamic>> getPublicKey({
+    List<Permission>? permissions,
+  }) async {
     final arguments = {
       "type": "get_public_key",
       "uri_data": "login",

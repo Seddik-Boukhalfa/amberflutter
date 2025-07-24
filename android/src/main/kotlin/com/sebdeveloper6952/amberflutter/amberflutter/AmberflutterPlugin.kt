@@ -212,23 +212,35 @@ private class MethodResultWrapper internal constructor(result: MethodChannel.Res
   MethodChannel.Result {
   private val methodResult: MethodChannel.Result
   private val handler: Handler
+  @Volatile
+  private var hasReplied = false
 
   init {
     methodResult = result
     handler = Handler(Looper.getMainLooper())
   }
 
+  @Synchronized
   override fun success(result: Any?) {
-    handler.post { methodResult.success(result) }
+    if (!hasReplied) {
+      hasReplied = true
+      handler.post { methodResult.success(result) }
+    }
   }
 
-  override fun error(
-    errorCode: String, errorMessage: String?, errorDetails: Any?
-  ) {
-    handler.post { methodResult.error(errorCode, errorMessage, errorDetails) }
+  @Synchronized
+  override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+    if (!hasReplied) {
+      hasReplied = true
+      handler.post { methodResult.error(errorCode, errorMessage, errorDetails) }
+    }
   }
 
+  @Synchronized
   override fun notImplemented() {
-    handler.post { methodResult.notImplemented() }
+    if (!hasReplied) {
+      hasReplied = true
+      handler.post { methodResult.notImplemented() }
+    }
   }
 }
