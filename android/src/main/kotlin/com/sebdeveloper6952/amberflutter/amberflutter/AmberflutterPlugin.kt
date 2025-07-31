@@ -17,6 +17,7 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry
+import java.util.concurrent.atomic.AtomicInteger
 
 /** AmberflutterPlugin */
 class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, PluginRegistry.ActivityResultListener {
@@ -27,9 +28,10 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
   private lateinit var _channel : MethodChannel
   private lateinit var _context : Context
   private var _activity: Activity? = null
-  private lateinit var _result: MethodChannel.Result
-
-  private val _intentRequestCode = 0
+  
+  // Use a map to track multiple pending requests
+  private val _pendingResults = mutableMapOf<Int, MethodChannel.Result>()
+  private val _requestCodeGenerator = AtomicInteger(1000)
 
   override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
     _channel = MethodChannel(flutterPluginBinding.binaryMessenger, "com.sebdeveloper6952.amberflutter")
@@ -43,7 +45,7 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
 
   override fun onMethodCall(call: MethodCall, result: Result) {
     if (call.method == nostrsignerUri) {
-      _result = MethodResultWrapper(result)
+      val wrappedResult = MethodResultWrapper(result)
 
       var paramsMap: HashMap<*, *>? = null
       if (call.arguments != null && call.arguments is HashMap<*, *>) {
@@ -52,6 +54,7 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
 
       if (paramsMap == null) {
         Log.d("onMethodCall", "paramsMap is null")
+        wrappedResult.error("INVALID_ARGUMENTS", "Parameters map is null", null)
         return
       }
 
@@ -62,16 +65,23 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
       val uriData = paramsMap[intentExtraKeyUriData] as? String ?: ""
       val permissions = paramsMap[intentExtraKeyPermissions] as? String ?: ""
 
-     val data = getDataFromContentResolver(
-       requestType.uppercase(),
-       arrayOf(uriData, pubKey, currentUser),
-       _context.contentResolver,
-     )
-     if (!data.isNullOrEmpty()) {
-       Log.d("onMethodCall", "content resolver got data")
-       _result.success(data)
-       return
-     }
+      // Try ContentResolver first
+      val data = getDataFromContentResolver(
+        requestType.uppercase(),
+        arrayOf(uriData, pubKey, currentUser),
+        _context.contentResolver,
+      )
+      if (!data.isNullOrEmpty()) {
+        Log.d("onMethodCall", "content resolver got data")
+        wrappedResult.success(data)
+        return
+      }
+
+      // Generate unique request code for this call
+      val requestCode = _requestCodeGenerator.incrementAndGet()
+      
+      // Store the result callback for this request
+      _pendingResults[requestCode] = wrappedResult
 
       val intent = Intent(
         Intent.ACTION_VIEW,
@@ -85,32 +95,47 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
       intent.putExtra(intentExtraKeyPubKey, pubKey)
       intent.putExtra(intentExtraKeyId, id)
       intent.putExtra(intentExtraKeyPermissions, permissions)
-      // intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      
+      // Add the request code to the intent so we can track it
+      intent.putExtra("REQUEST_CODE", requestCode)
 
-      _activity?.startActivityForResult(
-        intent,
-        _intentRequestCode
-      )
+      try {
+        _activity?.startActivityForResult(intent, requestCode)
+      } catch (e: Exception) {
+        Log.e("onMethodCall", "Failed to start activity", e)
+        _pendingResults.remove(requestCode)
+        wrappedResult.error("ACTIVITY_ERROR", "Failed to start external app: ${e.message}", null)
+      }
+      
     } else if (call.method == "isAppInstalled") {
         var paramsMap: HashMap<*, *>? = null
         if (call.arguments != null && call.arguments is HashMap<*, *>) {
             paramsMap = call.arguments as HashMap<*, *>
         }
         if (paramsMap == null) {
+            result.error("INVALID_ARGUMENTS", "Parameters map is null", null)
             return
         }
-        var packageName: String? = paramsMap["packageName"] as? String ?: return
-        val isInstalled: Boolean = isPackageInstalled(_context, packageName!!)
-        result.success(isInstalled);
+        val packageName: String? = paramsMap["packageName"] as? String
+        if (packageName == null) {
+            result.error("INVALID_ARGUMENTS", "Package name is required", null)
+            return
+        }
+        val isInstalled: Boolean = isPackageInstalled(_context, packageName)
+        result.success(isInstalled)
     } else {
       result.notImplemented()
     }
   }
 
   override fun onActivityResult(requestCode: Int, resultCode: Int, intent: Intent?): Boolean {
-    if (requestCode == _intentRequestCode) {
+    // Find the pending result for this request code
+    val pendingResult = _pendingResults.remove(requestCode)
+    
+    if (pendingResult != null) {
       if (resultCode == Activity.RESULT_OK && intent != null) {
         val dataMap: HashMap<String, String?> = HashMap()
+        
         if (intent.hasExtra(intentExtraKeySignature)) {
           val signature = intent.getStringExtra(intentExtraKeySignature)
           dataMap[intentExtraKeySignature] = signature
@@ -124,14 +149,12 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
           dataMap[intentExtraKeyEvent] = event
         }
 
-        _result.success(dataMap)
-
-        return true
-      }else{
-         _result.success(null)
-         return true 
+        pendingResult.success(dataMap)
+      } else {
+        // Handle cancellation or error
+        pendingResult.success(null)
       }
-     
+      return true
     }
 
     return false
@@ -139,10 +162,17 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
 
   override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
     _channel.setMethodCallHandler(null)
+    // Clean up any pending results
+    _pendingResults.clear()
   }
 
   override fun onDetachedFromActivity() {
     _activity = null
+    // Clean up pending results when activity is detached
+    for (result in _pendingResults.values) {
+      result.error("ACTIVITY_DETACHED", "Activity was detached before request completed", null)
+    }
+    _pendingResults.clear()
   }
 
   override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
@@ -174,26 +204,27 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
         null,
         null,
         null
-      ).use {
-        if (it == null) {
+      ).use { cursor ->
+        if (cursor == null) {
           Log.d("getDataFromResolver", "resolver query is NULL")
           return null
         }
-        if (it.moveToFirst()) {
+        if (cursor.moveToFirst()) {
           val dataMap: HashMap<String, String?> = HashMap()
-          val index = it.getColumnIndex("signature")
-          if (index < 0) {
-            Log.d("getDataFromResolver", "column 'signature' not found")
-          } else {
-            val signature = it.getString(index)
+          val index = cursor.getColumnIndex("signature")
+          if (index >= 0) {
+            val signature = cursor.getString(index)
             dataMap["signature"] = signature
-          }
-          val indexJson = it.getColumnIndex("event")
-          if (indexJson < 0) {
-            Log.d("getDataFromResolver", "column 'event' not found")
           } else {
-            val eventJson = it.getString(indexJson)
+            Log.d("getDataFromResolver", "column 'signature' not found")
+          }
+          
+          val indexJson = cursor.getColumnIndex("event")
+          if (indexJson >= 0) {
+            val eventJson = cursor.getString(indexJson)
             dataMap["event"] = eventJson
+          } else {
+            Log.d("getDataFromResolver", "column 'event' not found")
           }
 
           return dataMap
@@ -206,7 +237,6 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
     return null
   }
 }
-
 
 private class MethodResultWrapper internal constructor(result: MethodChannel.Result) :
   MethodChannel.Result {
