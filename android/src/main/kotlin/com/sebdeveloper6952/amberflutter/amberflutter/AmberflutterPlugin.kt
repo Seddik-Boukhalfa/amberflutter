@@ -123,6 +123,8 @@ class AmberflutterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware, Plugi
         }
         val isInstalled: Boolean = isPackageInstalled(_context, packageName)
         result.success(isInstalled)
+    } else if (call.method == "getPlatformVersion") {
+    result.success("Android " + android.os.Build.VERSION.RELEASE)
     } else {
       result.notImplemented()
     }

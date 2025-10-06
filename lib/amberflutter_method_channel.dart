@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:amberflutter/models.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'amberflutter_platform_interface.dart';
@@ -9,7 +8,7 @@ import 'amberflutter_platform_interface.dart';
 /// An implementation of [AmberflutterPlatform] that uses method channels.
 class MethodChannelAmberflutter extends AmberflutterPlatform {
   /// The method channel used to interact with the native platform.
-  @visibleForTesting
+
   final methodChannel =
       const MethodChannel('com.sebdeveloper6952.amberflutter');
 
